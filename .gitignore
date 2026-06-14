@@ -1,0 +1,16 @@
+# Local data artifacts: downloaded zips, extracted npz, converted HDF5
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Demo outputs
+plots/
+
+# Local Claude Code config
+.claude/
+
+# OS
+.DS_Store
