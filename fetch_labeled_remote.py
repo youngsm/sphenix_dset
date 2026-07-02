@@ -10,25 +10,66 @@ Usage:
   python fetch_labeled_remote.py --out data/raw --prefix labeled/
   python fetch_labeled_remote.py --out data/raw --prefix labeled/test/ --list
 """
-import argparse, io, os, sys, zipfile, urllib.request
+import argparse, io, os, sys, time, random, zipfile, urllib.request, urllib.error, socket
 
 URL = "https://zenodo.org/api/records/16970029/files/TPCpp-10M.zip/content"
 
+# Zenodo rate-limits (HTTP 429) and occasionally 5xx's. Back off + honor Retry-After
+# instead of failing, so many parallel range reads eventually all get through.
+_RETRY_CODES = frozenset({429, 500, 502, 503, 504})
+_MAX_RETRIES = 8
+_MAX_BACKOFF = 120.0
+
+
+def _urlopen_retry(req, timeout, read_body=False, max_retries=_MAX_RETRIES):
+    """urlopen with exponential backoff on 429/5xx and transient network errors.
+    If read_body, returns the response bytes (read fully so a mid-stream reset is
+    retried too); otherwise returns the open response for the caller to inspect."""
+    delay = 2.0
+    for attempt in range(max_retries):
+        try:
+            r = urllib.request.urlopen(req, timeout=timeout)
+            if read_body:
+                data = r.read()
+                r.close()
+                return data
+            return r
+        except urllib.error.HTTPError as e:
+            if e.code in _RETRY_CODES and attempt < max_retries - 1:
+                ra = e.headers.get("Retry-After") if e.headers else None
+                base = float(ra) if (ra and ra.isdigit()) else delay
+                # jitter so parallel workers don't wake up and stampede together
+                time.sleep(min(base, _MAX_BACKOFF) + random.uniform(0, 3))
+                delay = min(delay * 2, _MAX_BACKOFF)
+                continue
+            raise
+        except (urllib.error.URLError, socket.timeout, ConnectionError, TimeoutError):
+            if attempt < max_retries - 1:
+                time.sleep(min(delay, _MAX_BACKOFF) + random.uniform(0, 3))
+                delay = min(delay * 2, _MAX_BACKOFF)
+                continue
+            raise
+    raise RuntimeError("unreachable")
+
 
 class HTTPRangeFile(io.RawIOBase):
-    """Minimal seekable read-only file backed by HTTP Range GETs."""
-    def __init__(self, url, timeout=60):
+    """Minimal seekable read-only file backed by HTTP Range GETs (with backoff)."""
+    def __init__(self, url, timeout=60, size=None, probe=True):
         self.url = url; self.timeout = timeout; self._pos = 0
-        req = urllib.request.Request(url, method="HEAD")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            self._size = int(r.headers["Content-Length"])
-        # verify range support
-        if not self._probe():
+        if size is None:
+            req = urllib.request.Request(url, method="HEAD")
+            with _urlopen_retry(req, timeout) as r:
+                self._size = int(r.headers["Content-Length"])
+        else:
+            self._size = size
+        # verify range support (skippable when the caller already knows the size,
+        # e.g. parallel workers that were handed byte-ranges by the parent)
+        if probe and not self._probe():
             raise RuntimeError("server does not honor Range requests")
 
     def _probe(self):
         req = urllib.request.Request(self.url, headers={"Range": "bytes=0-0"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+        with _urlopen_retry(req, self.timeout) as r:
             return r.status == 206
 
     # --- io plumbing ---
@@ -47,13 +88,7 @@ class HTTPRangeFile(io.RawIOBase):
             return b""
         end = min(self._pos + n, self._size) - 1
         req = urllib.request.Request(self.url, headers={"Range": f"bytes={self._pos}-{end}"})
-        for attempt in range(5):
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as r:
-                    data = r.read()
-                break
-            except Exception as e:
-                if attempt == 4: raise
+        data = _urlopen_retry(req, self.timeout, read_body=True)
         self._pos += len(data)
         return data
     def readinto(self, b):

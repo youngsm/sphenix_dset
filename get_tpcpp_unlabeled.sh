@@ -6,21 +6,24 @@
 #
 # Streams shard-by-shard in parallel: downloads ~1.17 GB, converts, deletes the
 # raw npz, moves on -- so peak disk stays ~ jobs * a couple GB, not 117 GB.
-# Fully resumable: re-run the same command to pick up any missing/failed shards.
+# Zenodo rate-limits (HTTP 429); the downloader backs off + honors Retry-After and
+# uses big Range GETs to keep request counts low. If you see frequent "429" pauses,
+# lower the jobs count. Fully resumable: re-run to pick up any missing/failed shards.
 #
-# Run this ON THE CLUSTER where you want the data.
+# Run this ON THE CLUSTER (a node with outbound internet; set https_proxy if your
+# site requires a proxy -- urllib honors it).
 #
 # Usage:
 #   ./get_tpcpp_unlabeled.sh <output_root> [jobs] [shards]
 #
 # Examples:
-#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp            # all 100 shards, 8 jobs
-#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16         # all 100 shards, 16 jobs
-#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16 0-9     # just shards 0-9
+#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp            # all 100 shards, 4 jobs
+#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 6          # all 100 shards, 6 jobs
+#   ./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 4 0-9      # just shards 0-9
 set -euo pipefail
 
 OUT="${1:?usage: $0 <output_root> [jobs] [shards]}"
-JOBS="${2:-8}"
+JOBS="${2:-4}"
 SHARDS="${3:-0-99}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

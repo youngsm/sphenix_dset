@@ -56,17 +56,24 @@ couple GB, **not** 117 GB). Fully resumable - re-run to finish any missing shard
 
 ```bash
 pip install numpy h5py
-./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp            # all 100 shards, 8 parallel
-./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16         # 16 parallel
-./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16 0-9     # just shards 0-9 (a subset)
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp            # all 100 shards, 4 parallel
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 6          # 6 parallel
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 4 0-9      # just shards 0-9 (a subset)
 ```
 
 Output: `…/pilarnet_v2/unlabeled/tpcpp10m_unlabeled_<NNN>.h5` + `*_points.npy`
 (one file per shard, ~100k events each). Use split `unlabeled`, `revision="v2"`.
 
-- Sizing: peak RAM ≈ `jobs` × ~4 GB and peak disk ≈ `jobs` × ~3 GB; downloads
-  dominate wall time, so `jobs` a bit above core count is fine. `--gzip N` (via
-  `fetch_convert_unlabeled.py`) trades CPU for smaller HDF5.
+- **Run from a node with outbound internet.** If your site needs a proxy, export
+  `https_proxy` / `http_proxy` first (urllib honors them). On SLAC S3DF this
+  usually means a squid proxy; the tool prints exactly this hint if it can't
+  connect.
+- **Zenodo rate-limits (HTTP 429).** The downloader backs off and honors
+  `Retry-After`, and uses large Range GETs (`--chunk-mb`, default 128) to keep the
+  request count low (~10-20 requests/shard). If you still see frequent `429`
+  pauses, lower `--jobs`.
+- Sizing: peak RAM ≈ `jobs` × ~4 GB and peak disk ≈ `jobs` × ~3 GB. `--gzip N`
+  (via `fetch_convert_unlabeled.py`) trades CPU for smaller HDF5.
 - Labels are placeholders: **one cluster per event**, `group_id=0`,
   `interaction_id=0`, `segment_motif=1`, and `pid=-1` (pimm's reader maps `-1`→
   `5`="none", i.e. an ignore label). Only **coord + energy** are meaningful.
