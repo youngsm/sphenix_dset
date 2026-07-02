@@ -42,6 +42,41 @@ python3 convert_tpcpp_to_pilarnet.py --labeled-dir RAW/labeled --out-dir OUT_H5
 python3 verify_roundtrip.py RAW/labeled/test OUT_H5/test/tpcpp10m_test.h5   # optional check
 ```
 
+## Unlabeled 10M events (for self-supervised pretraining)
+
+The archive also holds the **10M unlabeled events** in 100 shards
+(`unlabeled/spacepoints_000.npz … _099.npz`, ~1.17 GB each, **117.5 GB total**),
+same `[E,x,y,z]` spacepoints as the labeled set but with **no** track/pid/noise
+truth. This converts them to the **same PILArNet-M v2 layout** with placeholder
+labels, so pimm can use them as a pretraining split (PoLAr-MAE / MAE).
+
+One command, run on the cluster (streams shard-by-shard in parallel: download
+~1.17 GB → convert → delete the raw npz → next, so peak disk stays ~`jobs` × a
+couple GB, **not** 117 GB). Fully resumable - re-run to finish any missing shards.
+
+```bash
+pip install numpy h5py
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp            # all 100 shards, 8 parallel
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16         # 16 parallel
+./get_tpcpp_unlabeled.sh /scratch/$USER/tpcpp 16 0-9     # just shards 0-9 (a subset)
+```
+
+Output: `…/pilarnet_v2/unlabeled/tpcpp10m_unlabeled_<NNN>.h5` + `*_points.npy`
+(one file per shard, ~100k events each). Use split `unlabeled`, `revision="v2"`.
+
+- Sizing: peak RAM ≈ `jobs` × ~4 GB and peak disk ≈ `jobs` × ~3 GB; downloads
+  dominate wall time, so `jobs` a bit above core count is fine. `--gzip N` (via
+  `fetch_convert_unlabeled.py`) trades CPU for smaller HDF5.
+- Labels are placeholders: **one cluster per event**, `group_id=0`,
+  `interaction_id=0`, `segment_motif=1`, and `pid=-1` (pimm's reader maps `-1`→
+  `5`="none", i.e. an ignore label). Only **coord + energy** are meaningful.
+
+### Pieces (individually)
+```bash
+python3 fetch_convert_unlabeled.py --out ROOT --jobs 16 --shards 0-99   # stream+convert
+python3 convert_unlabeled_tpcpp.py RAW/spacepoints_000.npz --out-dir OUT # convert local npz
+```
+
 ## Format mapping (TPCpp → pimm v2)
 
 `PILArNetH5Dataset.get_data(revision="v2")` reads:

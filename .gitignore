@@ -1,5 +1,11 @@
 # Local data artifacts: downloaded zips, extracted npz, converted HDF5
 data/
+raw/
+raw_unlabeled/
+pilarnet_v2/
+*.h5
+*.npz
+*_points.npy
 
 # Python
 __pycache__/
